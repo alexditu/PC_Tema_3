@@ -1,0 +1,197 @@
+================================================================================
+Tema 3 PC
+Nume: 			Ditu Alexandru Mihai
+Grupa/Serie: 	323 CA
+================================================================================
+
+	Voi explica modul in care am rezolvat tema, detaliat, prima data din punctul
+de vedere al serverlui, apoi al clientului.
+
+1. Server.c
+
+	Variabile/Structuri de date folosite:
+
+		typedef struct {
+			in_port_t port;
+			clock_t start_time;
+			struct in_addr ip_addr;
+			int status; //1=connected, 0=free slot
+			char name[NAME_LEN];
+		} ClientInfo;
+	- in structura de mai sus, retin informatii despre clienti.
+	- variabila status reprezinta un flag ce poate lua 3 valori:
+		status = 0 -> slot liber, nu contine detalii despre niciun client
+			(am un vector in care retin datele despre clienti, iar pe masura ce
+			 aceastia intra sau ies, status isi schimba valoarea, pentru a sti
+			 eu ce sloturi sunt libere)
+		status = 1 -> am inceput sa retin date despre un client (start_time ->
+			timpul cand s-a conectat), si urmeaza sa primesc si numele, portul,
+			ip-ul.
+		status = 2 -> s-au retinut toate datele despre client.
+
+	- informatiile despre clienti le tin intr-un vector ce poate lua valori de la
+		0 la MAX_CLIENT-1 (adica de la 0-9).
+
+	
+	
+	In plus fata de main, am mai folosit aici si 2 functii:
+
+	1) void status (ClientInfo *clientInfo, int size)
+		- aceasta afiseaza la stdin informatiile depsre toti clientii conectati
+			(nume, ip, port)
+	2) int getActiveClients (ClientInfo *clientInfo)
+		- imi intoarce cati clienti activi (care au statusul 2) exista
+
+	Implementarea comenzilor pentru server a fost destul de usoara:
+		- verficam daca am primit ceva de la stdin, daca da, in functie de primul
+	cuvant (cu strtok) imi dadeam seama ce comanda este.
+
+	Cazul in care a venit ceva pe socket-ul pe care fac listen:
+		- verific daca mai am loc (nu s-au conectat 10 clienti)
+		- daca da, fac accept() si retin datele necesare
+
+
+	Cazul in care primesc ceva de la un client:
+		- mesajele primite de la client au un antet (un int), din care imi dau 
+			seama ce fel de mesaj este.
+		- astfel mesajele pot avea urmatorul tip:
+			type = 1: listclients
+			type = 2: date despre client (infoclient <nume_client>)
+			type = 3: client data (acest mesaj este primit atunci cand un nou
+						client se conecteaza la server si isi trimite datele sale
+						(nume, port, ip). Tot aici setez si timpul de conectare.
+			type = 4: quit
+
+
+2. Client.c
+
+	Variabile/Structuri de date folosite:
+		- #define HLEN 50 -> lungime history
+		- pentru history retin doar ultimele 50 de mesaje, iar in cazul in care
+			se primesc mai mult de 50 acestea se suprascriu (pastrez ultimele
+			50 de mesaje. Mi s-a parut cel mai corect asa. Alta varianta era
+			sa aloc dinamic, daca se depaseste pragul de 50, dar am considerat
+			ca nu este cazul)
+		- mesajele primite le retin intr-o matrice: char history[HLEN][length];
+		- in aceasta matrice pot retine 2 tipuri de date:
+			HMessage (messaj efectiv)
+			FMessage (pentru fisierele primite)
+		- pentru simplitate am facut 2 structuri:
+			typedef struct {
+				char timestamp[20];
+				char name[NAME_LEN];
+				char msg[BUFFLEN];
+			}HMessage;
+
+			typedef struct {
+				char from_name[NAME_LEN];
+				char file_name[NAME_LEN];
+			}FMessage
+		- length reprezinta lungimea celei mai mari structuri (HMessage).
+
+	In afara de main mai am 2 functii ajutatoare:
+	- ClientInfo getInfoClient (char *name, int server_sfd)
+		- intoarce o structura de tipul ClientInfo
+		- o folesesc ori de cate ori am nevoie sa aflu informatii despre un
+			client (vreau sa-i trimit un mesaj, un fisier etc.)
+
+	- void sendMessage (in_port_t port, char name[NAME_LEN], 
+						char *msg, int msg_size)
+		- aceasta functie trimite un mesaj (msg) la server
+		- NOTA: cand un client vrea sa-i trimita un mesaj altui client, aceasta
+			deschide o noua conexiune, trimite mesajul, iar apoi inchide 
+			conexiunea.
+
+	Implementare comenzi:
+
+	1. listclients:
+
+		- trimit un mesaj de tipul 1 serverului
+		- acesta imi intoarce: nr de clienti conectati, iar apoi, pe rand, numele
+			fiecarui client
+
+	2. infoclient <nume_client>
+
+		- trimit serverului un mesaj de tipul 2
+		- in cazul in care clientul cautat exista/este conecat, serverul imi
+			raspunde cu datele necesare (timp conecate, nume, port).
+		- Mentionez ca timpul de conecate este calculat de catre server;
+			astfel cl_info.start_time reprezinta timpul de conectare, nu momentul
+			in care clientul s-a conecat la server, asa cum a fost coneceputa 
+			aceasta variabila (si cum reiese din nume). Asta se intampla doar
+			atunci cand cer informatii despre client.
+
+	3. message <nume_client> mesaj
+		Conventie:
+		- lungimea maxima a buffer-ului in care citesc comenzile de la stdin
+			are valoarea de BUFFLEN = 1024, deci mesajele au o lungime maxima
+			de 1024 - 9 - 255 = 760 de caractere.
+
+		- ficare mesaj trimis, are un antet (int type) = 1, pentru a putea face
+			difernta intre mesaje si mesaje legate de send_file
+
+		- cer informatii despre clinetul respectiv, si apoi folosesc functia
+			sendMessage. In momentul in care mesajul ajunge la celalalt client
+			acesta il afiseaza la stdin sub forma:
+			[HH:MM:SS][nume] msg
+
+	4. broadcast mesaj
+
+		- aceasta este aproape identica cu message, numai ca trimite mesaj catre
+			toti clientii conecatati, mai putin celui care a dat comanda 
+			broadcast.
+
+	5. sendfile <client_dest> <nume_fis>
+
+		- aflu informatii despre client
+		- deschid o noua conexiune
+		- clientul reciever poate primi 3 feluri de mesaje:
+			type = 2: recv trebuie sa deschida fisierul
+						(acesta primeste numele clientului de la care primeste
+						 fisierul -necesar pentru history-, si numele fisierului)
+			type = 3: recv primeste bacati din fisier
+			type = 4: s-a terminat de trimis fisierul, recv inchide fisierul
+
+		- pentru a nu fi blocati (atat clientul care primeste fisierul, cat si
+			cel care il trimite am procedat astfel:
+		- pentru listen am folosit si timeout = 1 sec;
+		- fisierul este trimis bucata cu bucata, de fiecare data cand se intra
+			in while, pana cand se termina de trimis tot.
+		- clientul care trimite fisierul, prima data trimite un mesaj de tipul
+			2 si seteaza status = 1;
+		- status este verificat la inceputul lui "while (1)": in cazul in care
+			un fisier este in curs de trimitere, mai citesc din fisier si mai
+			trimit o bucata. daca am citit 0b din fisier, inseamana ca am
+			terminat, si ii trimit clientului un mesaj de tipul 4, iar acesta
+			inchide fisierul, si setez status pe 0.
+		- tot aici (in if (status == 1)) verfic si cazul in care clientul catre
+			care trimit nu cumva a iesit.
+
+	6. history
+		- ori de cate ori receptionez un mesaj, salvez datele intr-o structura
+			de tipul HMessage, pe care o pun in history[HLEN][length], si
+			incrementez h_counter, variabila in care retin cate mesaje sunt
+			in history. Daca aceasta depaseste HLEN, o ia de la capat (se
+			reseteaza).
+		- in cazul in care receptionez un mesaj (la inceputul receptionarii),
+			salvez datele necesare (nume client +  nume fisier), intr-o variabila
+			de tip HMessage, pe care o pun mai apoi in history.
+		- cand primesc comanda, pur si simplu iterez prin history si afisez
+			informatiile de acolo
+
+	7. quit
+		- clientul inchide cei 2 socketi (server_sfd si my_sfd) si iese.
+		
+
+
+
+
+
+
+
+
+
+
+
+
+
